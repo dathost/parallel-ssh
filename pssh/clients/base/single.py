@@ -696,7 +696,7 @@ class BaseSSHClient(object):
         timeout = timeout * 1000 if timeout is not None else 100
         poller = poll()
         poller.register(self.sock, eventmask=events)
-        poller.poll(timeout=timeout)
+        poller.poll(1)
 
     def _poll_errcodes(self, directions_func, inbound, outbound, timeout=None):
         timeout = self.timeout if timeout is None else timeout
