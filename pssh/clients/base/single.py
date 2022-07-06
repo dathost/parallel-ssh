@@ -20,7 +20,7 @@ import os
 from getpass import getuser
 from socket import gaierror as sock_gaierror, error as sock_error
 
-from gevent import sleep, socket, Timeout as GTimeout
+from gevent import sleep, socket, Timeout as GTimeout, get_hub
 from gevent.hub import Hub
 from gevent.select import poll, POLLIN, POLLOUT
 
@@ -40,6 +40,7 @@ Hub.NOT_ERROR = (Exception,)
 host_logger = logging.getLogger('pssh.host_logger')
 logger = logging.getLogger(__name__)
 
+THREAD_POOL = get_hub().threadpool
 
 class Stdin(object):
     """Stdin stream for a channel.
@@ -202,7 +203,7 @@ class BaseSSHClient(object):
 
     def _auth_retry(self, retries=1):
         try:
-            self.auth()
+            THREAD_POOL.apply(self.auth)
         except Exception as ex:
             if retries < self.num_retries:
                 sleep(self.retry_delay)

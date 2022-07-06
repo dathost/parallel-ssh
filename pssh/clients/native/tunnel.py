@@ -101,7 +101,7 @@ class LocalForwarder(Thread):
         is put into self.out_q.
         """
         self._hub = get_hub()
-        assert self._hub.main_hub is False
+        # assert self._hub.main_hub is False
         self.started.set()
         self._cleanup_let = spawn(self._cleanup_servers_let)
         logger.debug("Hub in server runner is main hub: %s", self._hub.main_hub)
