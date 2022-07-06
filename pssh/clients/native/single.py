@@ -60,7 +60,7 @@ class SSHClient(BaseSSHClient):
                  proxy_pkey=None,
                  proxy_user=None,
                  proxy_password=None,
-                 _auth_thread_pool=True, keepalive_seconds=60,
+                 keepalive_seconds=60,
                  identity_auth=True,
                  ipv6_only=False,
                  ):
@@ -135,7 +135,7 @@ class SSHClient(BaseSSHClient):
         super(SSHClient, self).__init__(
             host, user=user, password=password, port=port, pkey=pkey,
             num_retries=num_retries, retry_delay=retry_delay,
-            allow_agent=allow_agent, _auth_thread_pool=_auth_thread_pool,
+            allow_agent=allow_agent,
             timeout=timeout,
             proxy_host=proxy_host, proxy_port=proxy_port,
             identity_auth=identity_auth,
@@ -161,8 +161,7 @@ class SSHClient(BaseSSHClient):
                 retry_delay=retry_delay, allow_agent=allow_agent,
                 timeout=timeout, forward_ssh_agent=forward_ssh_agent,
                 identity_auth=identity_auth,
-                keepalive_seconds=keepalive_seconds,
-                _auth_thread_pool=False)
+                keepalive_seconds=keepalive_seconds)
         except Exception as ex:
             msg = "Proxy authentication failed. " \
                   "Exception from tunnel client: %s"
@@ -217,10 +216,7 @@ class SSHClient(BaseSSHClient):
             # libssh2 timeout is in ms
             self.session.set_timeout(self.timeout * 1000)
         try:
-            if self._auth_thread_pool:
-                THREAD_POOL.apply(self.session.handshake, (self.sock,))
-            else:
-                self.session.handshake(self.sock)
+            THREAD_POOL.apply(self.session.handshake, (self.sock,))
         except Exception as ex:
             if retries < self.num_retries:
                 sleep(self.retry_delay)
