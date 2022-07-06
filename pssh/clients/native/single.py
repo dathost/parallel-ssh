@@ -171,8 +171,7 @@ class SSHClient(BaseSSHClient):
         if not FORWARDER.started.is_set():
             FORWARDER.start()
             FORWARDER.started.wait()
-        FORWARDER.enqueue(self._proxy_client, self.host, self.port)
-        proxy_local_port = FORWARDER.out_q.get()
+        proxy_local_port = FORWARDER.start_server(self._proxy_client, self.host, self.port)
         return proxy_local_port
 
     def disconnect(self):

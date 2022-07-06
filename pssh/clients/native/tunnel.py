@@ -18,10 +18,6 @@
 import logging
 
 from threading import Thread, Event
-try:
-    from queue import Queue
-except ImportError:
-    from Queue import Queue
 
 from gevent import spawn, joinall, get_hub, sleep
 from gevent.server import StreamServer
@@ -40,43 +36,21 @@ class LocalForwarder(Thread):
 
         Starts servers in their own gevent hub via thread run target.
 
-        Use ``enqueue`` to create new servers
-        and get port to connect to via ``out_q`` once a target has been put into the input queue.
-
         ``SSHClient`` is the client for the SSH host that will be proxying.
         """
         Thread.__init__(self)
-        self.in_q = Queue(1)
-        self.out_q = Queue(1)
         self._servers = {}
-        self._hub = None
         self.started = Event()
         self._cleanup_let = None
 
-    def _start_server(self):
-        client, host, port = self.in_q.get()
+    def start_server(self, client, host, port):
         server = TunnelServer(client, host, port)
         server.start()
-        self._get_server_listen_port(client, server)
-
-    def _get_server_listen_port(self, client, server):
         while not server.started:
             sleep(0.01)
         self._servers[client] = server
         local_port = server.listen_port
-        self.out_q.put(local_port)
-
-    def enqueue(self, client, host, port):
-        """Add target host:port to tunnel via client to queue.
-
-        :param client: The client to connect via.
-        :type client: :py:mod:`pssh.clients.native.single.SSHClient`
-        :param host: Target host to open connection to.
-        :type host: str
-        :param port: Target port to connect on.
-        :type port: int
-        """
-        self.in_q.put((client, host, port))
+        return local_port
 
     def shutdown(self):
         """Stop all tunnel servers."""
@@ -94,26 +68,8 @@ class LocalForwarder(Thread):
                 self.cleanup_server(client)
 
     def run(self):
-        """Thread runner ensures a non main hub has been created for all subsequent
-        greenlets and waits for (client, host, port) tuples to be put into self.in_q.
-
-        A server is created once something is in the queue and the port to connect to
-        is put into self.out_q.
-        """
-        self._hub = get_hub()
-        # assert self._hub.main_hub is False
         self.started.set()
         self._cleanup_let = spawn(self._cleanup_servers_let)
-        logger.debug("Hub in server runner is main hub: %s", self._hub.main_hub)
-        try:
-            while True:
-                if self.in_q.empty():
-                    sleep(.01)
-                    continue
-                self._start_server()
-        except Exception:
-            logger.exception("Tunnel thread caught exception and will exit:")
-            self.shutdown()
 
     def cleanup_server(self, client):
         """The purpose of this function is for a proxied client to notify the LocalForwarder that it
