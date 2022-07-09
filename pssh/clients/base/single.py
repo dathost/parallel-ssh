@@ -511,7 +511,8 @@ class BaseSSHClient(object):
 
     def run_command(self, command, sudo=False, user=None,
                     use_pty=False, shell=None,
-                    encoding='utf-8', timeout=None, read_timeout=None):
+                    encoding='utf-8', timeout=None, read_timeout=None,
+                    channel=None):
         """Run remote command.
 
         :param command: Command to run.
@@ -548,7 +549,7 @@ class BaseSSHClient(object):
             _command += "%s '%s'" % (_shell, command,)
         _command = _command.encode(encoding)
         with GTimeout(seconds=self.timeout):
-            channel = self.execute(_command, use_pty=use_pty)
+            channel = self.execute(_command, use_pty=use_pty, channel=channel)
         _timeout = read_timeout if read_timeout else timeout
         host_out = self._make_host_output(channel, encoding, _timeout)
         return host_out
