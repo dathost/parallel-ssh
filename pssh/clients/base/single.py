@@ -67,7 +67,7 @@ class Stdin(object):
         :param data: Data to write.
         :type data: str
         """
-        return self._client._eagain(self._channel.write, data)
+        return self._client._eagain_write(self._channel.write, data)
 
     def flush(self):
         """Flush pending data written to stdin."""
