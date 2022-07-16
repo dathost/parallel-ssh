@@ -63,8 +63,7 @@ class TunnelTest(unittest.TestCase):
         forwarder.started.wait()
         client = SSHClient(
             self.proxy_host, port=self.proxy_port, pkey=self.user_key)
-        forwarder.enqueue(client, self.proxy_host, self.port)
-        forwarder.out_q.get()
+        forwarder.start_server(client, self.proxy_host, self.port)
         self.assertTrue(len(forwarder._servers) > 0)
         forwarder.shutdown()
 
@@ -297,15 +296,14 @@ class TunnelTest(unittest.TestCase):
         forwarder.started.wait()
         client = SSHClient(
             self.proxy_host, port=self.proxy_port, pkey=self.user_key)
-        forwarder.enqueue(client, self.proxy_host, self.port)
-        forwarder.out_q.get()
+        forwarder.start_server(client, self.proxy_host, self.port)
         self.assertTrue(len(forwarder._servers) > 0)
         client.sock.close()
         client.disconnect()
         forwarder._cleanup_servers()
         self.assertEqual(len(forwarder._servers), 0)
         forwarder._start_server = _start_server
-        forwarder.enqueue(client, self.proxy_host, self.port)
+        forwarder.start_server(client, self.proxy_host, self.port)
         sleep(.1)
 
     def test_socket_channel_error(self):
@@ -366,19 +364,20 @@ class TunnelTest(unittest.TestCase):
         self.assertIsNone(server._wait_send_receive_lets(source_let, dest_let, channel))
         let.kill()
 
-    def test_server_start(self):
-        _port = 1234
-        class Server(object):
-            def __init__(self):
-                self.started = False
-                self.listen_port = _port
-        server = Server()
-        forwarder = LocalForwarder()
-        let = spawn(forwarder._get_server_listen_port, None, server)
-        let.start()
-        sleep(.01)
-        server.started = True
-        sleep(.01)
-        with GTimeout(seconds=1):
-            port = forwarder.out_q.get()
-        self.assertEqual(port, _port)
+    # Server start is now sync, so this test is no longer valid
+    # def test_server_start(self):
+    #     _port = 1234
+    #     class Server(object):
+    #         def __init__(self):
+    #             self.started = False
+    #             self.listen_port = _port
+    #     server = Server()
+    #     forwarder = LocalForwarder()
+    #     let = spawn(forwarder._get_server_listen_port, None, server)
+    #     let.start()
+    #     sleep(.01)
+    #     server.started = True
+    #     sleep(.01)
+    #     with GTimeout(seconds=1):
+    #         port = forwarder.out_q.get()
+    #     self.assertEqual(port, _port)
