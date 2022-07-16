@@ -161,8 +161,7 @@ class SSHClient(BaseSSHClient):
                 retry_delay=retry_delay, allow_agent=allow_agent,
                 timeout=timeout, forward_ssh_agent=forward_ssh_agent,
                 identity_auth=identity_auth,
-                keepalive_seconds=keepalive_seconds,
-                _auth_thread_pool=False)
+                keepalive_seconds=keepalive_seconds)
         except Exception as ex:
             msg = "Proxy authentication failed. " \
                   "Exception from tunnel client: %s"
