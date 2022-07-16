@@ -48,3 +48,32 @@ def enable_host_logger():
 def enable_debug_logger():
     """Enable debug logging for the library to sdout."""
     return enable_logger(logger, level=logging.DEBUG)
+
+
+# The c implementation in ssh2.utils doesn't handle strings with null characters correctly,
+# also this one supports \n\r as line separators.
+def find_eol(data, pos):
+    """Find end-of-line in buffer from position and return end position of
+    line and where next find_eol should start from.
+
+    Eg - find_eol(b'line\nline2', 0) would return (5, 6), next call should be
+    find_eol(b'line\nline2', 6) for next line where 6 was added to previous
+    position.
+
+    :param buf: Data buffer to parse for line.
+    :type buf: bytes
+    :param pos: Starting position to parse from
+    :type pos: int
+
+    :rtype: (int, int)"""
+
+    newline = data.find(b'\n', pos)
+    if newline == -1:
+        return -1, 0
+
+    if data[newline-1:newline] == b'\r':
+        return newline - pos - 1, 2
+    elif data[newline+1:newline+2] == b'\r':
+        return newline - pos, 2
+
+    return newline - pos, 1

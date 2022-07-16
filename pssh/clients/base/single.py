@@ -24,7 +24,6 @@ from gevent import sleep, socket, Timeout as GTimeout, get_hub
 from gevent.hub import Hub
 from gevent.select import poll, POLLIN, POLLOUT
 
-from ssh2.utils import find_eol
 from ssh2.exceptions import AgentConnectionError, AgentListIdentitiesError, \
     AgentAuthenticationError, AgentGetIdentityError
 
@@ -34,6 +33,7 @@ from ..reader import ConcurrentRWBuffer
 from ...exceptions import UnknownHostError, AuthenticationError, \
     ConnectionError, Timeout, NoIPv6AddressFoundError
 from ...output import HostOutput, HostOutputBuffers, BufferData
+from ...utils import find_eol
 
 
 Hub.NOT_ERROR = (Exception,)
