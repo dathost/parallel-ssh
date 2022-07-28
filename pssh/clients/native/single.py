@@ -18,6 +18,7 @@
 import logging
 import os
 from collections import deque
+from socket import SHUT_RDWR
 from warnings import warn
 
 from gevent import sleep, spawn, get_hub
@@ -179,24 +180,34 @@ class SSHClient(BaseSSHClient):
         Any errors on calling disconnect are suppressed by this function.
         """
         self._keepalive_greenlet = None
-        if self.session is not None:
+        if getattr(self, "session", None) is not None:
             try:
                 self._disconnect_eagain()
             except Exception:
                 pass
             self.session = None
-        if isinstance(self._proxy_client, SSHClient):
+        if isinstance(getattr(self, "_proxy_client", None), SSHClient):
             # Don't disconnect proxy client here - let the TunnelServer do it at the time that
             # _wait_send_receive_lets ends. The cleanup_server call here triggers the TunnelServer
             # to stop.
             FORWARDER.cleanup_server(self._proxy_client)
+            self._proxy_client = None
 
             # I wanted to clean up all the sockets here to avoid a ResourceWarning from unittest,
             # but unfortunately closing this socket here causes a segfault, not sure why yet.
             # self.sock.close()
-        else:
+            # Svante: I couldn't reproduce the segfaults, maybe it was because the tunnel was running
+            #         in a separate thread before, doing full cleanup of all sockets now.
+
+        if getattr(self, "sock", None):
+            try:
+                self.sock.shutdown(SHUT_RDWR)
+            except OSError:
+                # i.e. OSError: [Errno 107] Transport endpoint is not connected
+                pass
+
             self.sock.close()
-        self.sock = None
+            self.sock = None
 
     def spawn_send_keepalive(self):
         """Spawns a new greenlet that sends keep alive messages every
