@@ -27,13 +27,13 @@ from gevent.select import poll, POLLIN, POLLOUT
 from ssh2.exceptions import AgentConnectionError, AgentListIdentitiesError, \
     AgentAuthenticationError, AgentGetIdentityError
 
-from ..common import _validate_pkey
-from ...constants import DEFAULT_RETRIES, RETRY_DELAY
-from ..reader import ConcurrentRWBuffer
-from ...exceptions import UnknownHostError, AuthenticationError, \
+from pssh.clients.common import _validate_pkey
+from pssh.constants import DEFAULT_RETRIES, RETRY_DELAY
+from pssh.clients.reader import ConcurrentRWBuffer
+from pssh.exceptions import UnknownHostError, AuthenticationError, \
     ConnectionError, Timeout, NoIPv6AddressFoundError
-from ...output import HostOutput, HostOutputBuffers, BufferData
-from ...utils import find_eol
+from pssh.output import HostOutput, HostOutputBuffers, BufferData
+from pssh.utils import find_eol
 
 
 Hub.NOT_ERROR = (Exception,)
@@ -185,7 +185,6 @@ class BaseSSHClient(object):
         self._port = proxy_port if proxy_port else self.port
         self.pkey = _validate_pkey(pkey)
         self.identity_auth = identity_auth
-        self._keepalive_greenlet = None
         self.ipv6_only = ipv6_only
         self._init()
 

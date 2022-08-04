@@ -17,6 +17,7 @@
 
 import logging
 import os
+import weakref
 from collections import deque
 from socket import SHUT_RDWR
 from warnings import warn
@@ -32,16 +33,27 @@ from ssh2.sftp import LIBSSH2_FXF_READ, LIBSSH2_FXF_CREAT, LIBSSH2_FXF_WRITE, \
     LIBSSH2_SFTP_S_IWUSR, LIBSSH2_SFTP_S_IXUSR, LIBSSH2_SFTP_S_IROTH, \
     LIBSSH2_SFTP_S_IXGRP, LIBSSH2_SFTP_S_IXOTH
 
-from .tunnel import FORWARDER
-from ..base.single import BaseSSHClient
-from ...output import HostOutput
-from ...exceptions import SessionError, SFTPError, \
+from pssh.clients.native.tunnel import FORWARDER
+from pssh.clients.base.single import BaseSSHClient
+from pssh.output import HostOutput
+from pssh.exceptions import SessionError, SFTPError, \
     SFTPIOError, Timeout, SCPError, ProxyError
-from ...constants import DEFAULT_RETRIES, RETRY_DELAY
+from pssh.constants import DEFAULT_RETRIES, RETRY_DELAY
 
 
 logger = logging.getLogger(__name__)
 THREAD_POOL = get_hub().threadpool
+
+
+def keepalive(client_weakref):
+    while True:
+        client = client_weakref()
+        if client is None:
+            break
+
+        sleep_secs = client.send_keepalive()
+        del client
+        sleep(sleep_secs)
 
 
 class SSHClient(BaseSSHClient):
@@ -114,7 +126,6 @@ class SSHClient(BaseSSHClient):
         self.forward_ssh_agent = forward_ssh_agent
         self._forward_requested = False
         self.keepalive_seconds = keepalive_seconds
-        self._keepalive_greenlet = None
         self._proxy_client = None
         self.host = host
         self.port = port if port is not None else 22
@@ -179,7 +190,6 @@ class SSHClient(BaseSSHClient):
 
         Any errors on calling disconnect are suppressed by this function.
         """
-        self._keepalive_greenlet = None
         if getattr(self, "session", None) is not None:
             try:
                 self._disconnect_eagain()
@@ -212,11 +222,10 @@ class SSHClient(BaseSSHClient):
     def spawn_send_keepalive(self):
         """Spawns a new greenlet that sends keep alive messages every
         self.keepalive_seconds"""
-        return spawn(self._send_keepalive)
+        spawn(keepalive, weakref.ref(self))
 
-    def _send_keepalive(self):
-        while True:
-            sleep(self._eagain(self.session.keepalive_send))
+    def send_keepalive(self):
+        return self._eagain(self.session.keepalive_send)
 
     def configure_keepalive(self):
         self.session.keepalive_config(False, self.keepalive_seconds)
@@ -244,7 +253,7 @@ class SSHClient(BaseSSHClient):
     def _keepalive(self):
         if self.keepalive_seconds:
             self.configure_keepalive()
-            self._keepalive_greenlet = self.spawn_send_keepalive()
+            self.spawn_send_keepalive()
 
     def _agent_auth(self):
         self.session.agent_auth(self.user)
