@@ -19,7 +19,6 @@ import logging
 import os
 import weakref
 from collections import deque
-from socket import SHUT_RDWR
 from warnings import warn
 
 from gevent import sleep, spawn, get_hub
@@ -203,21 +202,11 @@ class SSHClient(BaseSSHClient):
             FORWARDER.cleanup_server(self._proxy_client)
             self._proxy_client = None
 
-            # I wanted to clean up all the sockets here to avoid a ResourceWarning from unittest,
-            # but unfortunately closing this socket here causes a segfault, not sure why yet.
-            # self.sock.close()
-            # Svante: I couldn't reproduce the segfaults, maybe it was because the tunnel was running
-            #         in a separate thread before, doing full cleanup of all sockets now.
-
-        if getattr(self, "sock", None):
-            try:
-                self.sock.shutdown(SHUT_RDWR)
-            except OSError:
-                # i.e. OSError: [Errno 107] Transport endpoint is not connected
-                pass
-
-            self.sock.close()
-            self.sock = None
+        # Running self.socket.close() here triggers the bug covered by test_multiple_clients_exec_terminates_channels
+        # https://github.com/ParallelSSH/parallel-ssh/issues/200
+        # python should garbage collect the socket when its out of scope anyways, if this does not happen we could
+        # try to use self.sock.shutdown(SHUT_RDWR) here
+        self.sock = None
 
     def spawn_send_keepalive(self):
         """Spawns a new greenlet that sends keep alive messages every
