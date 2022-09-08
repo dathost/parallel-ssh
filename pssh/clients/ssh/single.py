@@ -19,18 +19,17 @@ import logging
 
 from gevent import sleep, spawn, Timeout as GTimeout, joinall
 from ssh import options
-from ssh.session import Session, SSH_READ_PENDING, SSH_WRITE_PENDING
-from ssh.key import import_privkey_file, import_cert_file, copy_cert_to_privkey,\
-    import_privkey_base64
-from ssh.exceptions import EOF
 from ssh.error_codes import SSH_AGAIN
+from ssh.exceptions import EOF
+from ssh.key import import_privkey_file, import_cert_file, copy_cert_to_privkey, \
+    import_privkey_base64
+from ssh.session import Session, SSH_READ_PENDING, SSH_WRITE_PENDING
 
 from ..base.single import BaseSSHClient
 from ..common import _validate_pkey_path
-from ...output import HostOutput
-from ...exceptions import SessionError, Timeout
 from ...constants import DEFAULT_RETRIES, RETRY_DELAY
-
+from ...exceptions import SessionError, Timeout
+from ...output import HostOutput
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,7 @@ class SSHClient(BaseSSHClient):
 
     def __init__(self, host,
                  user=None, password=None, port=None,
-                 pkey=None,
+                 pkey=None, alias=None,
                  cert_file=None,
                  num_retries=DEFAULT_RETRIES,
                  retry_delay=RETRY_DELAY,
@@ -60,6 +59,8 @@ class SSHClient(BaseSSHClient):
         :type password: str
         :param port: SSH port to connect to. Defaults to SSH default (22)
         :type port: int
+        :param alias: Use an alias for this host.
+        :type alias: str
         :param pkey: Private key file path to use for authentication. Path must
           be either absolute path or relative to user home directory
           like ``~/<path>``.
@@ -114,7 +115,7 @@ class SSHClient(BaseSSHClient):
         self.gssapi_client_identity = gssapi_client_identity
         self.gssapi_delegate_credentials = gssapi_delegate_credentials
         super(SSHClient, self).__init__(
-            host, user=user, password=password, port=port, pkey=pkey,
+            host, user=user, password=password, port=port, pkey=pkey, alias=alias,
             num_retries=num_retries, retry_delay=retry_delay,
             allow_agent=allow_agent,
             _auth_thread_pool=_auth_thread_pool,
@@ -238,25 +239,22 @@ class SSHClient(BaseSSHClient):
         if use_pty:
             self._eagain(channel.request_pty, timeout=self.timeout)
         logger.debug("Executing command '%s'", cmd)
-        self._eagain(channel.request_exec, cmd, timeout=self.timeout)
+        self._eagain(channel.request_exec, cmd)
         return channel
 
     def _read_output_to_buffer(self, channel, _buffer, is_stderr=False):
-        while True:
-            self.poll()
-            try:
-                size, data = channel.read_nonblocking(is_stderr=is_stderr)
-            except EOF:
-                _buffer.eof.set()
-                sleep(.1)
-                return
-            if size > 0:
-                _buffer.write(data)
-            else:
-                # Yield event loop to other greenlets if we have no data to
-                # send back, meaning the generator does not yield and can there
-                # for block other generators/greenlets from running.
-                sleep(.1)
+        try:
+            while True:
+                self.poll()
+                try:
+                    size, data = channel.read_nonblocking(is_stderr=is_stderr)
+                except EOF:
+                    return
+                if size > 0:
+                    _buffer.write(data)
+                sleep()
+        finally:
+            _buffer.eof.set()
 
     def wait_finished(self, host_output, timeout=None):
         """Wait for EOF from channel and close channel.
@@ -313,7 +311,7 @@ class SSHClient(BaseSSHClient):
         :type channel: :py:class:`ssh.channel.Channel`
         """
         logger.debug("Closing channel")
-        self._eagain(channel.close, timeout=self.timeout)
+        self._eagain(channel.close)
 
     def poll(self, timeout=None):
         """ssh-python based co-operative gevent poll on session socket.
@@ -329,5 +327,5 @@ class SSHClient(BaseSSHClient):
         """Run function given and handle EAGAIN for an ssh-python session"""
         return self._eagain_errcode(func, SSH_AGAIN, *args, **kwargs)
 
-    def _eagain_write(self, write_func, data, timeout=None):
-        return self._eagain_write_errcode(write_func, data, SSH_AGAIN, timeout=timeout)
+    def _eagain_write(self, write_func, data):
+        return self._eagain_write_errcode(write_func, data, SSH_AGAIN)

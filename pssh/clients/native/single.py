@@ -19,7 +19,6 @@ import logging
 import os
 import weakref
 from collections import deque
-from warnings import warn
 
 from gevent import sleep, spawn, get_hub
 from gevent.lock import RLock
@@ -32,13 +31,12 @@ from ssh2.sftp import LIBSSH2_FXF_READ, LIBSSH2_FXF_CREAT, LIBSSH2_FXF_WRITE, \
     LIBSSH2_SFTP_S_IWUSR, LIBSSH2_SFTP_S_IXUSR, LIBSSH2_SFTP_S_IROTH, \
     LIBSSH2_SFTP_S_IXGRP, LIBSSH2_SFTP_S_IXOTH
 
-from pssh.clients.native.tunnel import FORWARDER
-from pssh.clients.base.single import BaseSSHClient
-from pssh.output import HostOutput
-from pssh.exceptions import SessionError, SFTPError, \
+from .tunnel import FORWARDER
+from ..base.single import BaseSSHClient
+from ...constants import DEFAULT_RETRIES, RETRY_DELAY
+from ...exceptions import SessionError, SFTPError, \
     SFTPIOError, Timeout, SCPError, ProxyError
-from pssh.constants import DEFAULT_RETRIES, RETRY_DELAY
-
+from ...output import HostOutput
 
 logger = logging.getLogger(__name__)
 THREAD_POOL = get_hub().threadpool
@@ -62,7 +60,7 @@ class SSHClient(BaseSSHClient):
 
     def __init__(self, host,
                  user=None, password=None, port=None,
-                 pkey=None,
+                 pkey=None, alias=None,
                  num_retries=DEFAULT_RETRIES,
                  retry_delay=RETRY_DELAY,
                  allow_agent=True, timeout=None,
@@ -76,12 +74,15 @@ class SSHClient(BaseSSHClient):
                  identity_auth=True,
                  ipv6_only=False,
                  ):
-        """:param host: Host name or IP to connect to.
+        """
+        :param host: Host name or IP to connect to.
         :type host: str
         :param user: User to connect as. Defaults to logged in user.
         :type user: str
         :param password: Password to use for password authentication.
         :type password: str
+        :param alias: Use an alias for this host.
+        :type alias: str
         :param port: SSH port to connect to. Defaults to SSH default (22)
         :type port: int
         :param pkey: Private key file path to use for authentication. Path must
@@ -126,6 +127,7 @@ class SSHClient(BaseSSHClient):
         self._forward_requested = False
         self.keepalive_seconds = keepalive_seconds
         self._proxy_client = None
+        self.alias = alias
         self.host = host
         self.port = port if port is not None else 22
         if proxy_host is not None:
@@ -142,9 +144,10 @@ class SSHClient(BaseSSHClient):
                 identity_auth=identity_auth,
             )
             proxy_host = '127.0.0.1'
-        self._chan_lock = RLock()
+        self._chan_stdout_lock = RLock()
+        self._chan_stderr_lock = RLock()
         super(SSHClient, self).__init__(
-            host, user=user, password=password, port=port, pkey=pkey,
+            host, user=user, password=password, alias=alias, port=port, pkey=pkey,
             num_retries=num_retries, retry_delay=retry_delay,
             allow_agent=allow_agent, _auth_thread_pool=_auth_thread_pool,
             timeout=timeout,
@@ -157,7 +160,7 @@ class SSHClient(BaseSSHClient):
         return self._eagain(channel.shell)
 
     def _connect_proxy(self, proxy_host, proxy_port, proxy_pkey,
-                       user=None, password=None,
+                       user=None, password=None, alias=None,
                        num_retries=DEFAULT_RETRIES,
                        retry_delay=RETRY_DELAY,
                        allow_agent=True, timeout=None,
@@ -167,7 +170,7 @@ class SSHClient(BaseSSHClient):
         assert isinstance(self.port, int)
         try:
             self._proxy_client = SSHClient(
-                proxy_host, port=proxy_port, pkey=proxy_pkey,
+                proxy_host, port=proxy_port, pkey=proxy_pkey, alias=alias,
                 num_retries=num_retries, user=user, password=password,
                 retry_delay=retry_delay, allow_agent=allow_agent,
                 timeout=timeout, forward_ssh_agent=forward_ssh_agent,
@@ -217,6 +220,7 @@ class SSHClient(BaseSSHClient):
         return self._eagain(self.session.keepalive_send)
 
     def configure_keepalive(self):
+        """Configures keepalive on the server for `self.keepalive_seconds`."""
         self.session.keepalive_config(False, self.keepalive_seconds)
 
     def _init_session(self, retries=1):
@@ -268,16 +272,15 @@ class SSHClient(BaseSSHClient):
         return chan
 
     def open_session(self):
-        """Open new channel from session"""
+        """Open new channel from session.
+
+        :rtype: :py:class:`ssh2.channel.Channel`
+        """
         try:
             chan = self._open_session()
         except Exception as ex:
             raise SessionError(ex)
-        if self.forward_ssh_agent and not self._forward_requested:
-            if not hasattr(chan, 'request_auth_agent'):
-                warn("Requested SSH Agent forwarding but libssh2 version used "
-                     "does not support it - ignoring")
-                return chan
+        # if self.forward_ssh_agent and not self._forward_requested:
             # self._eagain(chan.request_auth_agent)
             # self._forward_requested = True
         return chan
@@ -307,18 +310,19 @@ class SSHClient(BaseSSHClient):
         self._eagain(channel.execute, cmd)
         return channel
 
-    def _read_output_to_buffer(self, read_func, _buffer):
+    def _read_output_to_buffer(self, read_func, _buffer, is_stderr=False):
+        _lock = self._chan_stderr_lock if is_stderr else self._chan_stdout_lock
         try:
             while True:
-                with self._chan_lock:
+                with _lock:
                     size, data = read_func()
-                while size == LIBSSH2_ERROR_EAGAIN:
+                if size == LIBSSH2_ERROR_EAGAIN:
                     self.poll()
-                    with self._chan_lock:
-                        size, data = read_func()
+                    continue
                 if size <= 0:
                     break
                 _buffer.write(data)
+                sleep()
         finally:
             _buffer.eof.set()
 
@@ -346,7 +350,7 @@ class SSHClient(BaseSSHClient):
         self.close_channel(channel)
 
     def close_channel(self, channel):
-        with self._chan_lock:
+        with self._chan_stdout_lock, self._chan_stderr_lock:
             logger.debug("Closing channel")
             self._eagain(channel.close)
 
@@ -357,7 +361,6 @@ class SSHClient(BaseSSHClient):
         return self._eagain(self.session.sftp_init)
 
     def _make_sftp(self):
-        """Make SFTP client from open transport"""
         try:
             sftp = self._make_sftp_eagain()
         except Exception as ex:
@@ -365,7 +368,7 @@ class SSHClient(BaseSSHClient):
         return sftp
 
     def _mkdir(self, sftp, directory):
-        """Make directory via SFTP channel
+        """Make directory via SFTP channel.
 
         :param sftp: SFTP client object
         :type sftp: :py:class:`ssh2.sftp.SFTP`
@@ -435,10 +438,22 @@ class SSHClient(BaseSSHClient):
                 data = local_fh.read(self._BUF_SIZE)
 
     def sftp_put(self, sftp, local_file, remote_file):
+        """Perform an SFTP put - copy local file path to remote via SFTP.
+
+        :param sftp: SFTP client object.
+        :type sftp: :py:class:`ssh2.sftp.SFTP`
+        :param local_file: Local filepath to copy to remote host.
+        :type local_file: str
+        :param remote_file: Remote filepath on remote host to copy file to.
+        :type remote_file: str
+
+        :raises: :py:class:`pssh.exceptions.SFTPIOError` on I/O errors writing
+          via SFTP.
+        """
         mode = LIBSSH2_SFTP_S_IRUSR | \
-               LIBSSH2_SFTP_S_IWUSR | \
-               LIBSSH2_SFTP_S_IRGRP | \
-               LIBSSH2_SFTP_S_IROTH
+            LIBSSH2_SFTP_S_IWUSR | \
+            LIBSSH2_SFTP_S_IRGRP | \
+            LIBSSH2_SFTP_S_IROTH
         f_flags = LIBSSH2_FXF_CREAT | LIBSSH2_FXF_WRITE | LIBSSH2_FXF_TRUNC
         with self._sftp_openfh(
                 sftp.open, remote_file, f_flags, mode) as remote_fh:
@@ -564,6 +579,9 @@ class SSHClient(BaseSSHClient):
         :type local_file: str
         :param recurse: Whether or not to recursively copy directories
         :type recurse: bool
+        :param sftp: The SFTP channel to use instead of creating a new one.
+          Only used when ``recurse`` is ``True``.
+        :type sftp: :py:class:`ssh2.sftp.SFTP`
         :param encoding: Encoding to use for file paths when recursion is
           enabled.
         :type encoding: str
@@ -621,6 +639,9 @@ class SSHClient(BaseSSHClient):
         :type local_file: str
         :param remote_file: Remote filepath on remote host to copy file to
         :type remote_file: str
+        :param sftp: The SFTP channel to use instead of creating a new one.
+          Only used when ``recurse`` is ``True``.
+        :type sftp: :py:class:`ssh2.sftp.SFTP`
         :param recurse: Whether or not to descend into directories recursively.
         :type recurse: bool
 
@@ -741,12 +762,12 @@ class SSHClient(BaseSSHClient):
             LIBSSH2_SESSION_BLOCK_OUTBOUND,
         )
 
-    def _eagain_write(self, write_func, data, timeout=None):
+    def _eagain_write(self, write_func, data):
         """Write data with given write_func for an ssh2-python session while
         handling EAGAIN and resuming writes from last written byte on each call to
         write_func.
         """
-        return self._eagain_write_errcode(write_func, data, LIBSSH2_ERROR_EAGAIN, timeout=timeout)
+        return self._eagain_write_errcode(write_func, data, LIBSSH2_ERROR_EAGAIN)
 
-    def eagain_write(self, write_func, data, timeout=None):
-        return self._eagain_write(write_func, data, timeout=timeout)
+    def eagain_write(self, write_func, data):
+        return self._eagain_write(write_func, data)

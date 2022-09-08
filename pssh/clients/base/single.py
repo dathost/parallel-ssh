@@ -27,14 +27,13 @@ from gevent.select import poll, POLLIN, POLLOUT
 from ssh2.exceptions import AgentConnectionError, AgentListIdentitiesError, \
     AgentAuthenticationError, AgentGetIdentityError
 
-from pssh.clients.common import _validate_pkey
-from pssh.constants import DEFAULT_RETRIES, RETRY_DELAY
-from pssh.clients.reader import ConcurrentRWBuffer
-from pssh.exceptions import UnknownHostError, AuthenticationError, \
+from ..common import _validate_pkey
+from ..reader import ConcurrentRWBuffer
+from ...constants import DEFAULT_RETRIES, RETRY_DELAY
+from ...exceptions import UnknownHostError, AuthenticationError, \
     ConnectionError, Timeout, NoIPv6AddressFoundError
 from pssh.output import HostOutput, HostOutputBuffers, BufferData
 from pssh.utils import find_eol
-
 
 Hub.NOT_ERROR = (Exception,)
 host_logger = logging.getLogger('pssh.host_logger')
@@ -160,7 +159,7 @@ class BaseSSHClient(object):
 
     def __init__(self, host,
                  user=None, password=None, port=None,
-                 pkey=None,
+                 pkey=None, alias=None,
                  num_retries=DEFAULT_RETRIES,
                  retry_delay=RETRY_DELAY,
                  allow_agent=True, timeout=None,
@@ -172,6 +171,7 @@ class BaseSSHClient(object):
                  ):
         self._auth_thread_pool = _auth_thread_pool
         self.host = host
+        self.alias = alias
         self.user = user if user else getuser()
         self.password = password
         self.port = port if port else 22
@@ -283,7 +283,7 @@ class BaseSSHClient(object):
             raise unknown_ex from ex
         for i, (family, _type, proto, _, sock_addr) in enumerate(addr_info):
             try:
-                return self._connect_socket(family, _type, proto, sock_addr, host, port, retries)
+                return self._connect_socket(family, _type, sock_addr, host, port, retries)
             except ConnectionRefusedError as ex:
                 if i+1 == len(addr_info):
                     logger.error("No available addresses from %s", [addr[4] for addr in addr_info])
@@ -291,7 +291,7 @@ class BaseSSHClient(object):
                     raise
                 continue
 
-    def _connect_socket(self, family, _type, proto, sock_addr, host, port, retries):
+    def _connect_socket(self, family, _type, sock_addr, host, port, retries):
         self.sock = socket.socket(family, _type)
         if self.timeout:
             self.sock.settimeout(self.timeout)
@@ -406,7 +406,7 @@ class BaseSSHClient(object):
             stdout=BufferData(rw_buffer=_stdout_buffer, reader=_stdout_reader),
             stderr=BufferData(rw_buffer=_stderr_buffer, reader=_stderr_reader))
         host_out = HostOutput(
-            host=self.host, channel=channel, stdin=Stdin(channel, self),
+            host=self.host, alias=self.alias, channel=channel, stdin=Stdin(channel, self),
             client=self, encoding=encoding, read_timeout=read_timeout,
             buffers=_buffers,
         )
@@ -424,6 +424,8 @@ class BaseSSHClient(object):
 
         :param stderr_buffer: Buffer to read from.
         :type stderr_buffer: :py:class:`pssh.clients.reader.ConcurrentRWBuffer`
+        :param timeout: Timeout in seconds - defaults to no timeout.
+        :type timeout: int or float
         :rtype: generator
         """
         logger.debug("Reading from stderr buffer, timeout=%s", timeout)
@@ -435,6 +437,8 @@ class BaseSSHClient(object):
 
         :param stdout_buffer: Buffer to read from.
         :type stdout_buffer: :py:class:`pssh.clients.reader.ConcurrentRWBuffer`
+        :param timeout: Timeout in seconds - defaults to no timeout.
+        :type timeout: int or float
         :rtype: generator
         """
         logger.debug("Reading from stdout buffer, timeout=%s", timeout)
@@ -488,14 +492,16 @@ class BaseSSHClient(object):
                            encoding='utf-8'):
         """Read from output buffers and log to ``host_logger``.
 
-        :param output_buffer: Iterator containing buffer
+        :param output_buffer: Iterator containing buffer.
         :type output_buffer: iterator
-        :param prefix: String to prefix log output to ``host_logger`` with
+        :param prefix: String to prefix log output to ``host_logger`` with.
         :type prefix: str
-        :param callback: Function to call back once buffer is depleted:
+        :param callback: Function to call back once buffer is depleted.
         :type callback: function
-        :param callback_args: Arguments for call back function
+        :param callback_args: Arguments for call back function.
         :type callback_args: tuple
+        :param encoding: Encoding for output.
+        :type encoding: str
         """
         prefix = '' if prefix is None else prefix
         for line in output_buffer:
@@ -550,7 +556,7 @@ class BaseSSHClient(object):
         host_out = self._make_host_output(channel, encoding, _timeout)
         return host_out
 
-    def _eagain_write_errcode(self, write_func, data, eagain, timeout=None):
+    def _eagain_write_errcode(self, write_func, data, eagain):
         data_len = len(data)
         total_written = 0
         while total_written < data_len:
@@ -567,9 +573,10 @@ class BaseSSHClient(object):
             while ret == eagain:
                 self.poll()
                 ret = func(*args, **kwargs)
+                sleep()
             return ret
 
-    def _eagain_write(self, write_func, data, timeout=None):
+    def _eagain_write(self, write_func, data):
         raise NotImplementedError
 
     def _eagain(self, func, *args, **kwargs):
