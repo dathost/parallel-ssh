@@ -19,7 +19,7 @@ import logging
 
 from threading import Thread, Event
 
-from gevent import spawn, joinall, get_hub, sleep
+from gevent import spawn, joinall, sleep
 from gevent.server import StreamServer
 from ssh2.error_codes import LIBSSH2_ERROR_EAGAIN
 
@@ -149,7 +149,7 @@ class TunnelServer(StreamServer):
                 sleep(.01)
                 continue
             try:
-                self._client._eagain_write(channel.write, data)
+                self._client.eagain_write(channel.write, data)
             except Exception as ex:
                 logger.error("Error writing data to channel - %s", ex)
                 raise
