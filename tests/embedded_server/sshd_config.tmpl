@@ -13,3 +13,6 @@ Subsystem sftp internal-sftp
 AuthorizedKeysFile {{parent_dir}}/authorized_keys
 MaxSessions 100
 PidFile {{parent_dir}}/{{random_server}}.pid
+
+HostKeyAlgorithms=ssh-rsa,ssh-rsa-cert-v01@openssh.com
+PubkeyAcceptedAlgorithms=+ssh-rsa,ssh-rsa-cert-v01@openssh.com
